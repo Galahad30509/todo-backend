@@ -1,11 +1,16 @@
 const express = require("express");
 const cors = require("cors");
 const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+// ==================== CONFIG ====================
+const JWT_SECRET = process.env.JWT_SECRET || "secret123";
 
 // ==================== MONGODB ====================
 mongoose
@@ -13,7 +18,12 @@ mongoose
   .then(() => console.log("✅ MongoDB connected"))
   .catch((err) => console.log("❌ MongoDB error:", err));
 
-// ==================== MODEL ====================
+// ==================== MODELS ====================
+const UserSchema = new mongoose.Schema({
+  email: { type: String, unique: true },
+  password: String,
+});
+
 const TaskSchema = new mongoose.Schema(
   {
     title: { type: String, required: true },
@@ -23,56 +33,107 @@ const TaskSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+const User = mongoose.model("User", UserSchema);
 const Task = mongoose.model("Task", TaskSchema);
 
-// ==================== LOGIN ====================
-app.post("/login", (req, res) => {
-  const { email } = req.body;
+// ==================== AUTH MIDDLEWARE ====================
+const auth = (req, res, next) => {
+  const token = req.headers.authorization;
 
-  if (!email) {
-    return res.status(400).json({ error: "Email required" });
+  if (!token) {
+    return res.status(401).json({ error: "No token" });
   }
 
-  res.json({
-    message: "login success",
-    email,
-  });
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch {
+    res.status(401).json({ error: "Invalid token" });
+  }
+};
+
+// ==================== REGISTER ====================
+app.post("/register", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    const exist = await User.findOne({ email });
+    if (exist) {
+      return res.status(400).json({ error: "User already exists" });
+    }
+
+    const hashed = await bcrypt.hash(password, 10);
+
+    await User.create({
+      email,
+      password: hashed,
+    });
+
+    res.json({ message: "register success" });
+  } catch {
+    res.status(500).json({ error: "Register error" });
+  }
+});
+
+// ==================== LOGIN ====================
+app.post("/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    const user = await User.findOne({ email });
+    if (!user) return res.status(400).json({ error: "User not found" });
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch)
+      return res.status(400).json({ error: "Wrong password" });
+
+    const token = jwt.sign(
+      { id: user._id, email: user.email },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    res.json({ token, email: user.email });
+  } catch {
+    res.status(500).json({ error: "Login error" });
+  }
 });
 
 // ==================== GET TASK ====================
-app.get("/tasks/:email", async (req, res) => {
+app.get("/tasks", auth, async (req, res) => {
   try {
-    const tasks = await Task.find({ email: req.params.email }).sort({
+    const tasks = await Task.find({ email: req.user.email }).sort({
       createdAt: -1,
     });
     res.json(tasks);
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Fetch error" });
   }
 });
 
 // ==================== ADD TASK ====================
-app.post("/tasks", async (req, res) => {
+app.post("/tasks", auth, async (req, res) => {
   try {
-    const { title, email } = req.body;
+    const { title } = req.body;
 
-    if (!title || !email) {
-      return res.status(400).json({ error: "Missing data" });
+    if (!title) {
+      return res.status(400).json({ error: "Missing title" });
     }
 
     const newTask = await Task.create({
       title,
-      email,
+      email: req.user.email,
     });
 
     res.json(newTask);
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Create error" });
   }
 });
 
 // ==================== DELETE TASK ====================
-app.delete("/tasks/:id", async (req, res) => {
+app.delete("/tasks/:id", auth, async (req, res) => {
   try {
     const deleted = await Task.findByIdAndDelete(req.params.id);
 
@@ -81,13 +142,13 @@ app.delete("/tasks/:id", async (req, res) => {
     }
 
     res.json({ message: "deleted" });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Delete error" });
   }
 });
 
-// ==================== UPDATE TASK (EDIT + TOGGLE) ====================
-app.put("/tasks/:id", async (req, res) => {
+// ==================== UPDATE TASK ====================
+app.put("/tasks/:id", auth, async (req, res) => {
   try {
     const { title } = req.body;
 
@@ -97,11 +158,11 @@ app.put("/tasks/:id", async (req, res) => {
       return res.status(404).json({ error: "Task not found" });
     }
 
-    // 🔥 ถ้ามี title = EDIT
+    // EDIT
     if (title !== undefined) {
       task.title = title;
-    } 
-    // 🔥 ถ้าไม่มี = TOGGLE
+    }
+    // TOGGLE
     else {
       task.done = !task.done;
     }
@@ -109,12 +170,12 @@ app.put("/tasks/:id", async (req, res) => {
     await task.save();
 
     res.json(task);
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Update error" });
   }
 });
 
-// ==================== HEALTH CHECK ====================
+// ==================== HEALTH ====================
 app.get("/", (req, res) => {
   res.send("API is running 🚀");
 });
