@@ -8,16 +8,20 @@ app.use(cors());
 app.use(express.json());
 
 // ==================== MONGODB ====================
-mongoose.connect(process.env.MONGO_URI)
+mongoose
+  .connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB connected"))
-  .catch(err => console.log("❌ MongoDB error:", err));
+  .catch((err) => console.log("❌ MongoDB error:", err));
 
 // ==================== MODEL ====================
-const TaskSchema = new mongoose.Schema({
-  title: { type: String, required: true },
-  email: { type: String, required: true },
-  done: { type: Boolean, default: false },
-});
+const TaskSchema = new mongoose.Schema(
+  {
+    title: { type: String, required: true },
+    email: { type: String, required: true },
+    done: { type: Boolean, default: false },
+  },
+  { timestamps: true }
+);
 
 const Task = mongoose.model("Task", TaskSchema);
 
@@ -38,7 +42,9 @@ app.post("/login", (req, res) => {
 // ==================== GET TASK ====================
 app.get("/tasks/:email", async (req, res) => {
   try {
-    const tasks = await Task.find({ email: req.params.email }).sort({ _id: -1 });
+    const tasks = await Task.find({ email: req.params.email }).sort({
+      createdAt: -1,
+    });
     res.json(tasks);
   } catch (err) {
     res.status(500).json({ error: "Fetch error" });
@@ -57,7 +63,6 @@ app.post("/tasks", async (req, res) => {
     const newTask = await Task.create({
       title,
       email,
-      done: false,
     });
 
     res.json(newTask);
@@ -69,29 +74,49 @@ app.post("/tasks", async (req, res) => {
 // ==================== DELETE TASK ====================
 app.delete("/tasks/:id", async (req, res) => {
   try {
-    await Task.findByIdAndDelete(req.params.id);
+    const deleted = await Task.findByIdAndDelete(req.params.id);
+
+    if (!deleted) {
+      return res.status(404).json({ error: "Task not found" });
+    }
+
     res.json({ message: "deleted" });
   } catch (err) {
     res.status(500).json({ error: "Delete error" });
   }
 });
 
-// ==================== TOGGLE DONE ====================
+// ==================== UPDATE TASK (EDIT + TOGGLE) ====================
 app.put("/tasks/:id", async (req, res) => {
   try {
+    const { title } = req.body;
+
     const task = await Task.findById(req.params.id);
 
     if (!task) {
       return res.status(404).json({ error: "Task not found" });
     }
 
-    task.done = !task.done;
+    // 🔥 ถ้ามี title = EDIT
+    if (title !== undefined) {
+      task.title = title;
+    } 
+    // 🔥 ถ้าไม่มี = TOGGLE
+    else {
+      task.done = !task.done;
+    }
+
     await task.save();
 
-    res.json({ message: "updated" });
+    res.json(task);
   } catch (err) {
     res.status(500).json({ error: "Update error" });
   }
+});
+
+// ==================== HEALTH CHECK ====================
+app.get("/", (req, res) => {
+  res.send("API is running 🚀");
 });
 
 // ==================== SERVER ====================
