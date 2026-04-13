@@ -1,66 +1,70 @@
 const express = require("express");
 const cors = require("cors");
+const mongoose = require("mongoose");
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
-// 🔥 เก็บข้อมูลชั่วคราว
-let tasks = [];
-let idCounter = 1;
+// ==================== MONGODB ====================
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log("MongoDB connected"))
+  .catch(err => console.log(err));
+
+// ==================== MODEL ====================
+const Task = mongoose.model("Task", {
+  title: String,
+  email: String,
+  done: Boolean,
+});
 
 // ==================== LOGIN ====================
 app.post("/login", (req, res) => {
-  const { email, password } = req.body;
+  const { email } = req.body;
 
   res.json({
     message: "login success",
-    email: email,
+    email,
   });
 });
 
 // ==================== GET TASK ====================
-app.get("/tasks/:email", (req, res) => {
-  const userTasks = tasks.filter((t) => t.email === req.params.email);
-  res.json(userTasks);
+app.get("/tasks/:email", async (req, res) => {
+  const tasks = await Task.find({ email: req.params.email });
+  res.json(tasks);
 });
 
 // ==================== ADD TASK ====================
-app.post("/tasks", (req, res) => {
+app.post("/tasks", async (req, res) => {
   const { title, email } = req.body;
 
-  const newTask = {
-    id: idCounter++,
+  const newTask = await Task.create({
     title,
     email,
     done: false,
-  };
-
-  tasks.push(newTask);
+  });
 
   res.json(newTask);
 });
 
 // ==================== DELETE TASK ====================
-app.delete("/tasks/:id", (req, res) => {
-  const id = parseInt(req.params.id);
-  tasks = tasks.filter((t) => t.id !== id);
+app.delete("/tasks/:id", async (req, res) => {
+  await Task.findByIdAndDelete(req.params.id);
   res.json({ message: "deleted" });
 });
 
-// ==================== TOGGLE ====================
-app.put("/tasks/:id", (req, res) => {
-  const id = parseInt(req.params.id);
+// ==================== TOGGLE DONE ====================
+app.put("/tasks/:id", async (req, res) => {
+  const task = await Task.findById(req.params.id);
 
-  tasks = tasks.map((t) =>
-    t.id === id ? { ...t, done: !t.done } : t
-  );
+  task.done = !task.done;
+  await task.save();
 
   res.json({ message: "updated" });
 });
 
-// 🔥 สำคัญมาก (Render ใช้ PORT นี้)
+// ==================== SERVER ====================
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
